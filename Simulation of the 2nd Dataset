@@ -1,0 +1,109 @@
+***********Simulation (2nd Dataset)
+
+
+*simulate 10000 individuals
+clear
+set seed 11051982
+set obs 10000
+gen id=_n
+
+*simulate smoking status at baseline so that
+* 32% non smokers
+* 20% former smokers
+* 48% current smokers
+
+gen a=rbinomial(1,0.2)
+gen b=rbinomial(1,0.6) if a==0
+replace b=0 if a==1
+gen sm_status0=a+2*b
+
+*simulate sex, age
+gen sex=rbinomial(1,0.5)
+
+*simulate age
+gen age=rnormal(50,2.5)
+
+*simulate family history of CVD 
+gen fh_CVD=uniform()<+0.12+rnormal(0,0.05)
+
+*simulate diuretics 
+gen diuretics0=uniform()<-1.4+0.03*age+0.1*sex+rnormal(0,0.04)
+
+*simulate initial BMI at baseline
+gen BMI0=25.8+0.06*(age-18)+0.1*sex+0.5*fh_CVD-0.1*sm_status0-0.2*diuretics0+rnormal(0,0.56)  
+
+reg BMI0 age sex fh_CVD sm_status diuretics0
+
+sum
+
+*simulate smoking cessation between baseline and the 1st follow-up 
+gen     sm_cess1=0 if b==0
+replace sm_cess1=uniform()<-1.8+0.041*age-0.01*sex+rnormal(0,0.04)+0.2*diuretics0  if b==1
+
+*generate smoking status 1st follow-up, given smoking status at baseline  and smoking cessation 
+gen     sm_status1=sm_status0
+replace sm_status1=1 if sm_status0==2 & sm_cess1==1
+
+*simulate diuretics at 1st follow-up 
+gen 	diuretics1=uniform()<-1.4+0.03*age+0.1*sex+0.1*diuretics0+rnormal(0,0.04)
+
+*simulate CVD (outcome) at 1st follow-up 
+gen     CVD1=uniform()<-1.9+0.035*age+0.03*sex+rnormal(0,0.03) +0.3*fh_CVD+0.1*diuretics0
+
+*simulate BMI at 1st follow-up
+gen     BMI1=BMI0-0.9*CVD1+ 0.1* sm_status0 +2.5*sm_cess1-0.8*diuretics0-0.9*diuretics1+0.005*age+rnormal(0,1.4)  
+
+*generate BMI change and BMI change categories
+gen BMI_change=BMI1-BMI0
+
+gen     BMI_change_cat=1 if BMI_change/BMI0 < - 0.05
+replace BMI_change_cat=2 if BMI_change/BMI0 >= - 0.05 & BMI_change/BMI0 <= 0.05
+replace BMI_change_cat=3 if BMI_change/BMI0 > 0.05
+
+sum
+
+*generate BMI loss, maintenance and gain from BMI change categories
+gen      BMI_loss=0
+replace  BMI_loss=1  if BMI_change_cat==1
+gen      BMI_maint=0
+replace  BMI_maint=1 if BMI_change_cat==2
+gen      BMI_gain=0
+replace  BMI_gain=1  if BMI_change_cat==3
+
+*save  dataset with everybody
+save "$data/All (without stime).dta", replace
+
+* keep only those with CVD cases that happened during the baseline period
+keep if CVD1==1
+
+save "$data/CVD at baseline period.dta", replace
+
+*use dataset with everybody
+use "$data/All (without stime).dta", replace
+
+* keep only those without CVD cases that happened during the baseline period
+keep if CVD1==0
+
+*simulate survival time assuming no effect of BMI loss vs maintenance (lambda=0.0000001 and gamma=1.6 from the Weibull distribution)
+survsim stime , lambdas(0.0000001) gammas(1.6)  covariates(a 0.5 b 1.2 sex 0.2 age 0.05 diuretics0 0.4 diuretics1 0.15 fh_CVD 0.2 BMI0 0.2 sm_cess1 -0.5 BMI_gain 0.3) 
+
+*the follow-up time of the modelling period is 18 years
+generate CVD = stime <= 18
+replace stime = 18 if CVD == 0
+
+*save dataset without CVD during baseline period
+save "$data/No CVD at baseline period (with stime).dta", replace
+
+*append data with individuals with CVD during baseline period
+append using "$data/CVD at baseline period.dta"
+
+*replace stime to 0, if it’s missing (for those individuals with CVD during the baseline period)
+replace stime=0 if stime==.
+replace CVD=1 if CVD1==1
+
+*generate new survival time, equal to stime+2 (to add the baseline period)
+gen surv_time=stime+2
+
+*save final dataset
+save "$data/Final dataset.dta", replace
+
