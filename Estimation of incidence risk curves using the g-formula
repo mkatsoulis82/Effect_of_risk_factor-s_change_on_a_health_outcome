@@ -1,0 +1,102 @@
+use "$data/Final dataset.dta", replace
+
+expand 9
+
+sort id
+
+by id: gen obs_n=_n
+
+sort  id obs_n
+order id obs_n
+
+gen     CVD_pooled=0
+replace CVD_pooled=1 if CVD==1 & surv_time<=(obs_n+1)*2
+
+drop if CVD_pooled==1 & CVD_pooled[_n-1]==1 & id==id[_n-1]
+
+gen t=2*(obs_n-1)
+gen t2=t^2
+gen t3=t^3
+
+save "$data/Final dataset (pooled).dta", replace
+
+****************************************************
+
+global outcome_model4= "BMI_loss BMI_loss#c.t BMI_loss#c.t#c.t BMI_loss#c.t#c.t#c.t BMI_gain BMI_gain#c.t BMI_gain#c.t#c.t BMI_gain#c.t#c.t#c.t c.t c.t#c.t c.t#c.t#c.t i.sm_status0 sex age diuretics0 diuretics1 fh_CVD  BMI0 sm_cess1"
+
+use "$data/Final dataset (pooled).dta", replace
+
+* Fit a pooled logistic model to estimate the conditional probability of developing the outcome given exposure, baseline covariates, and time of follow-up. 
+* Add product terms between BMI change and time t of modelling period (beginning after the 1st follow-up), as well as t squared and t cubic. 
+
+logistic CVD_pooled $outcome_model4 if CVD1==0, cluster(id)
+
+*Create a dataset with all time points under each intervention
+*Re-expand data with rows for all timepoints
+
+keep if t==0
+
+expand 9 if t==0
+
+bysort id: replace t=2*(_n-1)
+
+*Create 3 copies of each subject, and set outcome to missing and treatment -- use only the newobs*
+
+expand 3
+
+sort id t
+
+by id t: gen intervention=_n
+
+replace BMI_loss=0
+replace BMI_loss=1 if intervention==1
+
+replace BMI_gain=0
+replace BMI_gain=1 if intervention==3
+
+
+sort id intervention t
+
+* Estimate the probability of not developing the outcome
+predict p_event_k, pr
+gen     p_survival_k=1-p_event_k
+
+* Estimate the probability of remaining free of the event after a certain time at t for subjects through multiplying the model’s predicted values through time t
+sort id intervention t
+gen p_survival=p_survival_k if t==0
+
+
+bysort id intervention: replace p_survival=p_survival_k*p_survival[_n-1] if t>0
+
+* Display 20-year standardized survival, under interventions*
+
+gen p_risk=1-p_survival
+by intervention, sort: summarize p_risk if t==16
+sort intervention t id
+by intervention t: egen p_mean_risk=mean(p_risk)
+
+*Graph of standardized survival over time, under interventions
+*Note, we want our graph to start at 100% survival, so add an extra time points t=0 and t=2 with P(surv) = 1
+
+expand 3 if t==0, generate(newtime)
+recode newtime 1=-1
+sort id intervention t newtime
+
+replace p_mean_risk=0 if newtime==-1 & t==0
+gen     time2=t+4
+replace time2=0 if newtime==-1 & t==0
+replace time2=2 if time2[_n-1]==0
+
+replace p_mean_risk=p_mean_risk*100
+
+*Separate the survival probabilities to allow plotting by intervention (BMI group)
+
+separate p_mean_risk, by(intervention)
+
+keep if _n<=3*11
+keep p_mean_risk1 p_mean_risk2 p_mean_risk3 time2 
+
+
+*Plot the curves
+twoway (line p_mean_risk1 time2, sort) (line p_mean_risk2 time2, sort) , ylabel(0(2)14) xlabel(0(2)20) ytitle("Risk (%)") xtitle("Years of follow-up") legend(label(1 "Weight loss") label(2 "Weight maintenance")) title("Method 4")
+
