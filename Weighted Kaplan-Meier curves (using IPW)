@@ -1,0 +1,39 @@
+* Open the simulated dataset from
+* https://github.com/mkatsoulis82/Effect_of_risk_factor-s_change_on_a_health_outcome/blob/main/Simulation%20of%20the%202nd%20Dataset
+
+use "$data/Final dataset.dta", replace
+
+
+* Fit a multinomial logistic regression model, BMI change as dependent variable (in 3 categories: BMI loss, maintenance and gain) 
+* and adjust for all potential confounders, both from the enrolment as well as from the follow-up, 
+* and predict the conditional probability of BMI loss, maintenance and gain [(pr(A/L); A=BMI change group, L=confounders]
+
+mlogit BMI_change_cat  i.sm_status0 sex age diuretics0 diuretics1 fh_CVD  BMI0 sm_cess1
+forvalues i=1(1)3{
+	predict pr_m4_BMI_change_`i', outcome(`i')
+}
+
+gen pr_m4_BMI_change=pr_m4_BMI_change_1*(BMI_change_cat==1) + pr_m4_BMI_change_2*(BMI_change_cat==2) +pr_m4_BMI_change_3*(BMI_change_cat==3)
+
+* Fit a multinomial logistic regression model, BMI change as dependent variable (in 3 categories: BMI loss, maintenance and gain) 
+* without adjusting for any confounder and predict the conditional probability of BMI loss, maintenance and gain [(pr(A); A=BMI change group]
+
+mlogit BMI_change_cat
+forvalues i=1(1)3{
+	predict pr_m4_BMI_change0_`i', outcome(`i')
+}
+
+gen pr_m4_BMI_change0=pr_m4_BMI_change0_1*(BMI_change_cat==1) + pr_m4_BMI_change0_2*(BMI_change_cat==2) +pr_m4_BMI_change0_3*(BMI_change_cat==3)
+
+
+* Generate stabilized weights as IPW=pr(A)/pr(A|L)
+
+gen IPW_m4=pr_m4_BMI_change0/pr_m4_BMI_change
+
+sum IPW_m4*
+
+* Calculate a weighted Kaplan-Meier estimator, using as weights for each individual the IPW. Before producing the Kaplan-Meier curves
+
+stset surv_time if CVD1==0 [pw=IPW_m4], failure(CVD = 1) 
+
+sts graph  if BMI_change_cat~=3, by(BMI_change_cat)  fail ylabel(0(0.02)0.12)
